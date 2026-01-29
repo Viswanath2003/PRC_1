@@ -86,11 +86,10 @@ class BuiltinSecretScanner(BaseScanner):
         (r'aes[_-]?key\s*[=:]\s*["\']?([a-fA-F0-9]{32,})["\']?', 'aes-key', Severity.CRITICAL, 'AES key detected'),
     ]
 
-    # Files to scan
+    # Files to scan - config files only, NOT business logic
     SCANNABLE_EXTENSIONS = {
         '.yaml', '.yml', '.json', '.xml', '.properties', '.conf', '.config',
-        '.env', '.ini', '.toml', '.tf', '.tfvars', '.py', '.js', '.ts',
-        '.java', '.go', '.rb', '.php', '.sh', '.bash', '.zsh', '.ps1',
+        '.env', '.ini', '.toml', '.tf', '.tfvars',
     }
 
     # Files that commonly contain secrets
@@ -182,6 +181,8 @@ class BuiltinSecretScanner(BaseScanner):
         'dist', 'build', '.eggs', 'vendor', 'third_party',
         'htmlcov', '.hypothesis', '.nox', '.coverage',
         'prc_reports',  # PRC output directory - never scan our own reports
+        'site-packages',  # Third-party packages - never scan installed libraries
+        'lib',  # Common lib directory in virtual envs (lib/pythonX.X/)
     }
 
     def _walk_files(self, root_path: Path):
