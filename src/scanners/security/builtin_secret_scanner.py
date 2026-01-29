@@ -86,11 +86,10 @@ class BuiltinSecretScanner(BaseScanner):
         (r'aes[_-]?key\s*[=:]\s*["\']?([a-fA-F0-9]{32,})["\']?', 'aes-key', Severity.CRITICAL, 'AES key detected'),
     ]
 
-    # Files to scan
+    # Files to scan - config files only, NOT business logic
     SCANNABLE_EXTENSIONS = {
         '.yaml', '.yml', '.json', '.xml', '.properties', '.conf', '.config',
-        '.env', '.ini', '.toml', '.tf', '.tfvars', '.py', '.js', '.ts',
-        '.java', '.go', '.rb', '.php', '.sh', '.bash', '.zsh', '.ps1',
+        '.env', '.ini', '.toml', '.tf', '.tfvars',
     }
 
     # Files that commonly contain secrets
