@@ -182,6 +182,8 @@ class BuiltinSecretScanner(BaseScanner):
         'dist', 'build', '.eggs', 'vendor', 'third_party',
         'htmlcov', '.hypothesis', '.nox', '.coverage',
         'prc_reports',  # PRC output directory - never scan our own reports
+        'site-packages',  # Third-party packages - never scan installed libraries
+        'lib',  # Common lib directory in virtual envs (lib/pythonX.X/)
     }
 
     def _walk_files(self, root_path: Path):

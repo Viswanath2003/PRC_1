@@ -37,6 +37,9 @@ EXCLUDED_DIRS = {
     '__pycache__', '.pytest_cache', '.mypy_cache', '.tox',
     'dist', 'build', '.eggs', '*.egg-info', '.coverage',
     'htmlcov', '.hypothesis', '.nox', 'vendor', 'third_party',
+    'prc_reports',  # PRC output directory - never scan our own reports
+    'site-packages',  # Third-party packages - never scan installed libraries
+    'lib',  # Common lib directory in virtual envs (lib/pythonX.X/)
 }
 
 

@@ -229,6 +229,8 @@ class FileDiscovery:
         "coverage",
         ".nyc_output",
         "prc_reports",  # PRC output directory - never scan our own reports
+        "site-packages",  # Third-party packages - never scan installed libraries
+        "lib",  # Common lib directory in virtual envs (lib/pythonX.X/)
     }
 
     # File extensions to exclude
