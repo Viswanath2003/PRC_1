@@ -228,6 +228,7 @@ class FileDiscovery:
         ".vscode",
         "coverage",
         ".nyc_output",
+        "prc_reports",  # PRC output directory - never scan our own reports
     }
 
     # File extensions to exclude
