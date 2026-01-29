@@ -3,9 +3,10 @@
 import asyncio
 import os
 import sys
+import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Set, Tuple
 
 import click
 from rich.console import Console
@@ -16,7 +17,7 @@ from rich.text import Text
 from rich import print as rprint
 
 from ..core.file_discovery import FileDiscovery
-from ..core.scanner import ScanResult, Severity
+from ..core.scanner import ScanResult, Severity, Issue
 from ..core.scorer import Scorer, Score
 from ..core.parallel_executor import ParallelExecutor
 from ..scanners.security.trivy_scanner import TrivyScanner
@@ -29,6 +30,14 @@ from ..reporters.report_generator import ReportGenerator
 from ..api.ai_insights import AIInsightsGenerator
 
 console = Console()
+
+# Directories to always exclude from scanning
+EXCLUDED_DIRS = {
+    '.git', 'node_modules', 'venv', '.venv', 'env', '.env',
+    '__pycache__', '.pytest_cache', '.mypy_cache', '.tox',
+    'dist', 'build', '.eggs', '*.egg-info', '.coverage',
+    'htmlcov', '.hypothesis', '.nox', 'vendor', 'third_party',
+}
 
 
 def get_severity_color(severity: str) -> str:
@@ -55,6 +64,84 @@ def get_score_color(score: float) -> str:
         return "orange1"
     else:
         return "red"
+
+
+def generate_issue_fingerprint(issue: Issue) -> str:
+    """Generate a unique fingerprint for deduplication.
+
+    Args:
+        issue: Issue to fingerprint
+
+    Returns:
+        Unique fingerprint string
+    """
+    # Create fingerprint from key fields
+    components = [
+        issue.rule_id or "",
+        issue.file_path or "",
+        str(issue.line_number or ""),
+        issue.title,
+    ]
+    combined = "|".join(components)
+    return hashlib.md5(combined.encode()).hexdigest()
+
+
+def deduplicate_issues(issues: List[Issue]) -> Tuple[List[Issue], int]:
+    """Remove duplicate issues based on fingerprint.
+
+    Args:
+        issues: List of issues to deduplicate
+
+    Returns:
+        Tuple of (deduplicated issues, count of duplicates removed)
+    """
+    seen_fingerprints: Set[str] = set()
+    unique_issues: List[Issue] = []
+    duplicates_removed = 0
+
+    for issue in issues:
+        fingerprint = generate_issue_fingerprint(issue)
+        if fingerprint not in seen_fingerprints:
+            seen_fingerprints.add(fingerprint)
+            unique_issues.append(issue)
+        else:
+            duplicates_removed += 1
+
+    return unique_issues, duplicates_removed
+
+
+def deduplicate_scan_results(scan_results: List[ScanResult]) -> List[ScanResult]:
+    """Deduplicate issues across all scan results.
+
+    Args:
+        scan_results: List of scan results
+
+    Returns:
+        Scan results with deduplicated issues
+    """
+    # Collect all issues with their source
+    all_issues: List[Tuple[Issue, str]] = []
+    for result in scan_results:
+        for issue in result.issues:
+            all_issues.append((issue, result.scanner_name))
+
+    # Deduplicate
+    seen_fingerprints: Set[str] = set()
+    unique_issues_by_scanner: Dict[str, List[Issue]] = {}
+
+    for issue, scanner_name in all_issues:
+        fingerprint = generate_issue_fingerprint(issue)
+        if fingerprint not in seen_fingerprints:
+            seen_fingerprints.add(fingerprint)
+            if scanner_name not in unique_issues_by_scanner:
+                unique_issues_by_scanner[scanner_name] = []
+            unique_issues_by_scanner[scanner_name].append(issue)
+
+    # Update scan results with deduplicated issues
+    for result in scan_results:
+        result.issues = unique_issues_by_scanner.get(result.scanner_name, [])
+
+    return scan_results
 
 
 @click.group()
@@ -122,18 +209,19 @@ def scan(
     )
     project = storage.create_project(project)
 
-    # Run the scan using a single event loop to avoid asyncio issues
+    # Track scanner status
+    scanner_status: Dict[str, str] = {}  # name -> status
+
     async def run_full_scan():
         """Run the complete scan workflow in a single async context."""
-        nonlocal output_dir
+        nonlocal output_dir, scanner_status
 
         # Initialize scanners
         active_scanners = []
-        external_available = False
+        skipped_scanners = []
 
         scanner_list = list(scanners)
         if "all" in scanner_list:
-            # Always include builtin scanner with external tools
             scanner_list = ["trivy", "checkov", "gitleaks", "builtin"]
 
         for scanner_name in scanner_list:
@@ -141,33 +229,48 @@ def scan(
                 scanner = TrivyScanner()
                 if scanner.is_available():
                     active_scanners.append(scanner)
-                    external_available = True
+                    scanner_status["Trivy"] = "active"
+                else:
+                    skipped_scanners.append(("Trivy", "not installed"))
+                    scanner_status["Trivy"] = "skipped (not installed)"
             elif scanner_name == "checkov":
                 scanner = CheckovScanner()
                 if scanner.is_available():
                     active_scanners.append(scanner)
-                    external_available = True
+                    scanner_status["Checkov"] = "active"
+                else:
+                    skipped_scanners.append(("Checkov", "not installed"))
+                    scanner_status["Checkov"] = "skipped (not installed)"
             elif scanner_name == "gitleaks":
                 scanner = GitleaksScanner()
                 if scanner.is_available():
                     active_scanners.append(scanner)
-                    external_available = True
+                    scanner_status["Gitleaks"] = "active"
+                else:
+                    skipped_scanners.append(("Gitleaks", "not installed"))
+                    scanner_status["Gitleaks"] = "skipped (not installed)"
             elif scanner_name == "builtin":
-                # Built-in scanner is always available and always runs
-                active_scanners.append(BuiltinSecretScanner())
+                # Built-in scanner with exclusions
+                scanner = BuiltinSecretScanner()
+                active_scanners.append(scanner)
+                scanner_status["Built-in Secret Scanner"] = "active"
 
-        # Ensure built-in scanner is included if no external tools and not already added
-        if not external_available and not any(isinstance(s, BuiltinSecretScanner) for s in active_scanners):
+        # Always ensure built-in scanner is included
+        if not any(isinstance(s, BuiltinSecretScanner) for s in active_scanners):
             active_scanners.append(BuiltinSecretScanner())
+            scanner_status["Built-in Secret Scanner"] = "active"
 
         if not active_scanners:
-            return None, None, []
+            return None, None, [], skipped_scanners
 
         # Run scans
         executor = ParallelExecutor()
         executor.add_scanners(active_scanners)
         execution_result = await executor.execute(str(target_path))
         scan_results = execution_result.scan_results
+
+        # Deduplicate issues across all scanners
+        scan_results = deduplicate_scan_results(scan_results)
 
         # Calculate score
         scorer = Scorer(readiness_threshold=threshold)
@@ -188,7 +291,7 @@ def scan(
             include_ai=ai,
         )
 
-        return score, report_paths, scan_results, active_scanners
+        return score, report_paths, scan_results, skipped_scanners
 
     with Progress(
         SpinnerColumn(),
@@ -203,61 +306,38 @@ def scan(
         progress.update(task, completed=True)
         console.print(f"  Found [green]{discovered.total_files}[/green] files to analyze")
 
-        # Initialize and run scan
-        task = progress.add_task("[cyan]Initializing scanners...", total=None)
-
-        # Show scanner initialization info
-        scanner_list = list(scanners)
-        if "all" in scanner_list:
-            scanner_list = ["trivy", "checkov", "gitleaks", "builtin"]
-
-        for scanner_name in scanner_list:
-            if scanner_name == "trivy":
-                scanner = TrivyScanner()
-                if not scanner.is_available():
-                    console.print(f"  [yellow]Warning: Trivy not available[/yellow]")
-            elif scanner_name == "checkov":
-                scanner = CheckovScanner()
-                if not scanner.is_available():
-                    console.print(f"  [yellow]Warning: Checkov not available[/yellow]")
-            elif scanner_name == "gitleaks":
-                scanner = GitleaksScanner()
-                if not scanner.is_available():
-                    console.print(f"  [yellow]Warning: Gitleaks not available[/yellow]")
-
         progress.update(task, completed=True)
 
-        # Run the full scan in a single event loop
+        # Run the full scan
         task = progress.add_task("[cyan]Running security scans...", total=None)
 
-        # Use asyncio.run with proper cleanup
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Use asyncio.run() which handles cleanup properly
         try:
-            result = loop.run_until_complete(run_full_scan())
-        finally:
-            # Proper cleanup of pending tasks and transports
-            pending = asyncio.all_tasks(loop)
-            for pending_task in pending:
-                pending_task.cancel()
-            # Give cancelled tasks a chance to complete
-            if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            loop.run_until_complete(loop.shutdown_asyncgens())
-            loop.close()
+            result = asyncio.run(run_full_scan())
+        except Exception as e:
+            console.print(f"[red]Error during scan: {e}[/red]")
+            sys.exit(1)
 
         if result[0] is None:
             console.print("[red]Error: No scanners available.[/red]")
             sys.exit(1)
 
-        score, report_paths, scan_results, active_scanners = result
+        score, report_paths, scan_results, skipped_scanners = result
 
         progress.update(task, completed=True)
-        console.print(f"  Active scanners: [green]{', '.join(s.name for s in active_scanners)}[/green]")
+
+        # Show active scanners
+        active_names = list(set(r.scanner_name for r in scan_results)) if scan_results else []
+        console.print(f"  Active scanners: [green]{', '.join(active_names) if active_names else 'None'}[/green]")
+
+        # Show skipped scanners
+        if skipped_scanners:
+            skipped_info = ", ".join([f"{name} ({reason})" for name, reason in skipped_scanners])
+            console.print(f"  Skipped scanners: [yellow]{skipped_info}[/yellow]")
 
     # Display results
     console.print()
-    _display_scan_results(scan_results, score, report_paths)
+    _display_scan_results(scan_results, score, report_paths, scanner_status)
 
     # Save to storage
     _save_to_storage(storage, project, scan_results, score, report_paths)
@@ -401,6 +481,7 @@ def issues(ctx: click.Context, path: str, severity: str, limit: int):
     table.add_column("Severity", width=10)
     table.add_column("Title", width=40)
     table.add_column("File", width=30)
+    table.add_column("Scanner", width=15)
     table.add_column("Fixable", width=8, justify="center")
 
     for issue in issues_list[:limit]:
@@ -415,6 +496,7 @@ def issues(ctx: click.Context, path: str, severity: str, limit: int):
             f"[{sev_color}]{issue.severity.upper()}[/{sev_color}]",
             issue.title[:38] + "..." if len(issue.title) > 38 else issue.title,
             file_info,
+            issue.scanner or "N/A",
             "[green]Yes[/green]" if issue.auto_fixable else "[dim]No[/dim]",
         )
 
@@ -461,26 +543,27 @@ def check_tools():
     ))
 
     tools = [
-        ("Trivy", TrivyScanner()),
-        ("Checkov", CheckovScanner()),
-        ("Gitleaks", GitleaksScanner()),
-        ("Built-in Secret Scanner", BuiltinSecretScanner()),
+        ("Trivy", TrivyScanner(), "Security vulnerability scanner"),
+        ("Checkov", CheckovScanner(), "IaC security scanner"),
+        ("Gitleaks", GitleaksScanner(), "Git secret detection"),
+        ("Built-in Secret Scanner", BuiltinSecretScanner(), "Hardcoded secret detection"),
     ]
 
     table = Table()
     table.add_column("Tool", style="cyan")
     table.add_column("Status")
+    table.add_column("Description")
     table.add_column("Installation")
 
-    for name, scanner in tools:
+    for name, scanner, description in tools:
         if scanner.is_available():
-            status = "[green]Available[/green]"
+            status = "[green]✓ Available[/green]"
             if name == "Built-in Secret Scanner":
                 install = "[dim]Built-in (no installation needed)[/dim]"
             else:
                 install = "[dim]Installed[/dim]"
         else:
-            status = "[red]Not Found[/red]"
+            status = "[red]✗ Not Found[/red]"
             if name == "Trivy":
                 install = "https://trivy.dev/latest/getting-started/installation/"
             elif name == "Checkov":
@@ -490,7 +573,7 @@ def check_tools():
             else:
                 install = "See documentation"
 
-        table.add_row(name, status, install)
+        table.add_row(name, status, description, install)
 
     console.print(table)
 
@@ -500,16 +583,20 @@ def check_tools():
     # Check ReportLab for PDF
     try:
         import reportlab
-        console.print("  PDF Generation (ReportLab): [green]Available[/green]")
+        console.print("  PDF Generation (ReportLab): [green]✓ Available[/green]")
     except ImportError:
-        console.print("  PDF Generation (ReportLab): [yellow]Not installed[/yellow] - pip install reportlab")
+        console.print("  PDF Generation (ReportLab): [yellow]✗ Not installed[/yellow] - pip install reportlab")
 
     # Check OpenAI
     openai_key = os.getenv("OPENAI_API_KEY")
     if openai_key:
-        console.print("  AI Insights (OpenAI): [green]Configured[/green]")
+        console.print("  AI Insights (OpenAI): [green]✓ Configured[/green]")
     else:
-        console.print("  AI Insights (OpenAI): [yellow]Not configured[/yellow] - Set OPENAI_API_KEY environment variable")
+        console.print("  AI Insights (OpenAI): [yellow]✗ Not configured[/yellow] - Set OPENAI_API_KEY environment variable")
+
+    # Excluded directories
+    console.print("\n[bold]Excluded Directories (auto-skipped):[/bold]")
+    console.print(f"  {', '.join(sorted(EXCLUDED_DIRS))}")
 
 
 @cli.command("config")
@@ -554,15 +641,13 @@ def config():
     console.print("    set OPENAI_API_KEY=your-api-key-here\n")
     console.print("  [cyan]Windows (PowerShell):[/cyan]")
     console.print("    $env:OPENAI_API_KEY=\"your-api-key-here\"\n")
-    console.print("  [cyan]Using .env file (with python-dotenv):[/cyan]")
-    console.print("    Create a .env file with: OPENAI_API_KEY=your-api-key-here")
-    console.print("    The scanner will automatically load it.\n")
 
 
 def _display_scan_results(
     scan_results: List[ScanResult],
     score: Score,
     report_paths: dict,
+    scanner_status: Dict[str, str] = None,
 ):
     """Display scan results in the terminal."""
     # Score display
@@ -588,6 +673,13 @@ def _display_scan_results(
     console.print(f"\n[bold]Issues Found:[/bold] {total_issues}")
     console.print(f"  [red]Critical: {critical}[/red] | [orange1]High: {high}[/orange1] | "
                   f"[yellow]Medium: {medium}[/yellow] | [blue]Low: {low}[/blue]")
+
+    # Issues by scanner
+    if scan_results:
+        console.print("\n[bold]Issues by Scanner:[/bold]")
+        for result in scan_results:
+            if result.issue_count > 0:
+                console.print(f"  {result.scanner_name}: {result.issue_count} issues")
 
     # Category scores
     if score.category_scores:
