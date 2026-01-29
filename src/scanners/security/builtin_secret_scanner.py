@@ -175,6 +175,14 @@ class BuiltinSecretScanner(BaseScanner):
 
         return self._complete_result(result, started_at)
 
+    # Directories to always exclude from scanning (synchronized with cli/main.py)
+    EXCLUDED_DIRS = {
+        '.git', 'node_modules', 'venv', '.venv', 'env', '.env',
+        '__pycache__', '.pytest_cache', '.mypy_cache', '.tox',
+        'dist', 'build', '.eggs', 'vendor', 'third_party',
+        'htmlcov', '.hypothesis', '.nox', '.coverage',
+    }
+
     def _walk_files(self, root_path: Path):
         """Walk through files to scan.
 
@@ -184,12 +192,11 @@ class BuiltinSecretScanner(BaseScanner):
         Yields:
             File paths to scan
         """
-        exclude_dirs = {'.git', 'node_modules', 'vendor', '.venv', 'venv', '__pycache__', 'dist', 'build'}
 
         for item in root_path.rglob('*'):
             if item.is_file():
                 # Skip excluded directories
-                if any(excluded in item.parts for excluded in exclude_dirs):
+                if any(excluded in item.parts for excluded in self.EXCLUDED_DIRS):
                     continue
 
                 # Check if file should be scanned
