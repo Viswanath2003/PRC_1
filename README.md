@@ -51,13 +51,28 @@ brew install trivy
 # or
 curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
-# Checkov
+# Checkov (REQUIRED for IaC scanning - Kubernetes, Terraform, etc.)
 pip install checkov
 
 # Gitleaks
 brew install gitleaks
 # or download from https://github.com/gitleaks/gitleaks/releases
 ```
+
+### Verify Installation
+
+```bash
+# Run the verification script to check all tools
+python verify_setup.py
+
+# Or check tools using PRC
+prc check-tools
+```
+
+**Important**:
+- If Checkov is NOT installed, you will only see Trivy/Gitleaks results in reports
+- The **built-in secret scanner** always runs and requires no installation
+- PDF reports require `pip install reportlab`
 
 ## Quick Start
 
