@@ -181,6 +181,7 @@ class BuiltinSecretScanner(BaseScanner):
         '__pycache__', '.pytest_cache', '.mypy_cache', '.tox',
         'dist', 'build', '.eggs', 'vendor', 'third_party',
         'htmlcov', '.hypothesis', '.nox', '.coverage',
+        'prc_reports',  # PRC output directory - never scan our own reports
     }
 
     def _walk_files(self, root_path: Path):
@@ -291,6 +292,23 @@ class BuiltinSecretScanner(BaseScanner):
 
         for pattern in placeholder_patterns:
             if re.match(pattern, value_lower):
+                return True
+
+        # Check for environment variable references (not hardcoded secrets)
+        env_var_patterns = [
+            r'os\.getenv\s*\(',      # Python os.getenv()
+            r'os\.environ\s*\[',     # Python os.environ[]
+            r'getenv\s*\(',          # C/generic getenv()
+            r'process\.env\.',       # Node.js process.env.
+            r'system\.getenv\s*\(',  # Java System.getenv()
+            r'env\s*\[',             # Ruby/generic ENV[]
+            r'env:',                 # YAML env reference
+            r'configparser',         # Python configparser
+            r'config\s*\.\s*get',    # Config getter pattern
+        ]
+
+        for pattern in env_var_patterns:
+            if re.search(pattern, value_lower):
                 return True
 
         return False
