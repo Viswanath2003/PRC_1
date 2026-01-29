@@ -28,15 +28,23 @@ class BuiltinSecretScanner(BaseScanner):
 
     # Common secret patterns with their severity
     SECRET_PATTERNS: List[Tuple[str, str, Severity, str]] = [
-        # Passwords in various formats
-        (r'password\s*[=:]\s*["\']?([^"\'\s]{4,})["\']?', 'hardcoded-password', Severity.CRITICAL, 'Hardcoded password detected'),
-        (r'passwd\s*[=:]\s*["\']?([^"\'\s]{4,})["\']?', 'hardcoded-password', Severity.CRITICAL, 'Hardcoded password detected'),
-        (r'pwd\s*[=:]\s*["\']?([^"\'\s]{4,})["\']?', 'hardcoded-password', Severity.HIGH, 'Possible hardcoded password'),
-        (r'secret\s*[=:]\s*["\']?([^"\'\s]{4,})["\']?', 'hardcoded-secret', Severity.CRITICAL, 'Hardcoded secret detected'),
+        # Passwords in various formats (YAML, config files, code)
+        (r'password\s*[=:]\s*["\']?([^"\'\s\n]{4,})["\']?', 'hardcoded-password', Severity.CRITICAL, 'Hardcoded password detected'),
+        (r'passwd\s*[=:]\s*["\']?([^"\'\s\n]{4,})["\']?', 'hardcoded-password', Severity.CRITICAL, 'Hardcoded password detected'),
+        (r'pwd\s*[=:]\s*["\']?([^"\'\s\n]{4,})["\']?', 'hardcoded-password', Severity.HIGH, 'Possible hardcoded password'),
+        (r'secret\s*[=:]\s*["\']?([^"\'\s\n]{4,})["\']?', 'hardcoded-secret', Severity.CRITICAL, 'Hardcoded secret detected'),
+
+        # Kubernetes Secret plaintext values (should be base64, but often hardcoded as plaintext)
+        (r'^\s*password\s*:\s*([a-zA-Z0-9_\-!@#$%^&*]{4,})$', 'k8s-secret-password', Severity.CRITICAL, 'Kubernetes Secret with plaintext password'),
+        (r'^\s*apikey\s*:\s*([a-zA-Z0-9_\-]{8,})$', 'k8s-secret-apikey', Severity.CRITICAL, 'Kubernetes Secret with plaintext API key'),
+        (r'^\s*api[_-]?key\s*:\s*([a-zA-Z0-9_\-]{8,})$', 'k8s-secret-apikey', Severity.CRITICAL, 'Kubernetes Secret with plaintext API key'),
+        (r'^\s*secret[_-]?key\s*:\s*([a-zA-Z0-9_\-]{8,})$', 'k8s-secret-key', Severity.CRITICAL, 'Kubernetes Secret with plaintext secret key'),
+        (r'^\s*token\s*:\s*([a-zA-Z0-9_\-]{8,})$', 'k8s-secret-token', Severity.HIGH, 'Kubernetes Secret with plaintext token'),
+        (r'^\s*credentials?\s*:\s*([a-zA-Z0-9_\-]{8,})$', 'k8s-secret-credentials', Severity.HIGH, 'Kubernetes Secret with plaintext credentials'),
 
         # API Keys and Tokens
-        (r'api[_-]?key\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{16,})["\']?', 'api-key', Severity.CRITICAL, 'API key detected'),
-        (r'apikey\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{16,})["\']?', 'api-key', Severity.CRITICAL, 'API key detected'),
+        (r'api[_-]?key\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{8,})["\']?', 'api-key', Severity.CRITICAL, 'API key detected'),
+        (r'apikey\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{8,})["\']?', 'api-key', Severity.CRITICAL, 'API key detected'),
         (r'token\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{16,})["\']?', 'auth-token', Severity.HIGH, 'Authentication token detected'),
         (r'auth[_-]?token\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{16,})["\']?', 'auth-token', Severity.CRITICAL, 'Auth token detected'),
         (r'access[_-]?token\s*[=:]\s*["\']?([a-zA-Z0-9_\-]{16,})["\']?', 'access-token', Severity.CRITICAL, 'Access token detected'),

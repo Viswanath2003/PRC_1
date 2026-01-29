@@ -5,10 +5,11 @@ A comprehensive automated system that evaluates applications and their deploymen
 ## Features
 
 - **Multi-dimensional Assessment**: Evaluates security, performance, reliability, and monitoring aspects
-- **Multiple Scanners**: Integrates with Trivy, Checkov, and Gitleaks for comprehensive scanning
+- **Multiple Scanners**: Integrates with Trivy, Checkov, Gitleaks, and a built-in secret scanner for comprehensive scanning
+- **Built-in Secret Scanner**: Detects hardcoded passwords, API keys, and credentials without requiring external tools
 - **AI-Powered Insights**: Uses OpenAI GPT to generate actionable remediation suggestions
 - **Automated Fixes**: Generates and applies fixes for common configuration issues
-- **Rich Reporting**: Generates reports in JSON, HTML, and PDF formats
+- **Rich Reporting**: Generates reports in JSON, HTML, and PDF formats (all enabled by default)
 - **Local Storage**: Tracks scan history and improvement trends over time
 - **CLI Interface**: Beautiful command-line interface with rich output
 
@@ -17,10 +18,12 @@ A comprehensive automated system that evaluates applications and their deploymen
 ### Prerequisites
 
 1. **Python 3.9+**
-2. **Security Scanning Tools** (install at least one):
+2. **Security Scanning Tools** (optional but recommended):
    - [Trivy](https://trivy.dev/latest/getting-started/installation/) - Vulnerability and misconfiguration scanner
    - [Checkov](https://www.checkov.io/2.Basics/Installing%20Checkov.html) - Infrastructure as Code scanner
    - [Gitleaks](https://github.com/gitleaks/gitleaks#installing) - Secret detection
+
+> **Note**: Even without external tools, PRC includes a **built-in secret scanner** that detects hardcoded passwords, API keys, and credentials. The built-in scanner runs automatically alongside any installed external tools.
 
 ### Install PRC
 
@@ -61,18 +64,21 @@ brew install gitleaks
 ### Basic Scan
 
 ```bash
-# Scan current directory
+# Scan current directory (generates JSON, HTML, and PDF reports by default)
 prc scan
 
 # Scan specific directory
 prc scan /path/to/project
 
-# Scan with specific output formats
-prc scan --format json --format html --format pdf
+# Scan with only specific output formats
+prc scan --format json --format html
 
 # Scan with AI insights (requires OPENAI_API_KEY)
 export OPENAI_API_KEY=your-api-key
 prc scan --ai
+
+# Check which scanning tools are available
+prc check-tools
 ```
 
 ### View Results
@@ -107,29 +113,36 @@ prc check-tools
 | `PRC_DATA_DIR` | Data directory for storage | `~/.prc` |
 | `PRC_CONFIG` | Path to configuration file | None |
 
-### Configuration File
+### Configuration Options
 
-Create a `prc.yaml` in your project root:
+You can customize the scan using CLI options:
 
-```yaml
-scoring:
-  readiness_threshold: 75.0
-  weights:
-    security: 0.40
-    performance: 0.20
-    reliability: 0.25
-    monitoring: 0.15
+```bash
+# Set custom readiness threshold
+prc scan --threshold 75.0
 
-scanners:
-  trivy:
-    enabled: true
-    severity_threshold: "MEDIUM"
+# Choose specific scanners
+prc scan --scanner trivy --scanner gitleaks --scanner builtin
 
-reporting:
-  formats:
-    - json
-    - html
+# Use only the built-in scanner
+prc scan --scanner builtin
+
+# Disable AI insights
+prc scan --no-ai
+
+# Custom output directory
+prc scan --output ./my-reports
 ```
+
+### Scanner Options
+
+| Scanner | Description | Installation |
+|---------|-------------|--------------|
+| `trivy` | Vulnerability and misconfiguration scanner | [Install Trivy](https://trivy.dev/latest/getting-started/installation/) |
+| `checkov` | Infrastructure as Code scanner | `pip install checkov` |
+| `gitleaks` | Git secret detection | [Install Gitleaks](https://github.com/gitleaks/gitleaks#installing) |
+| `builtin` | Built-in secret scanner (always available) | No installation needed |
+| `all` | Run all available scanners (default) | - |
 
 ## Architecture
 
@@ -146,7 +159,8 @@ production-readiness-checker/
 │   │   └── security/
 │   │       ├── trivy_scanner.py
 │   │       ├── checkov_scanner.py
-│   │       └── gitleaks_scanner.py
+│   │       ├── gitleaks_scanner.py
+│   │       └── builtin_secret_scanner.py  # Built-in (no external deps)
 │   │
 │   ├── reporters/            # Report generators
 │   │   ├── json_reporter.py
