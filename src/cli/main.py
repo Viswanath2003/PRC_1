@@ -70,8 +70,8 @@ def cli(ctx: click.Context, data_dir: Optional[str]):
 @cli.command("scan")
 @click.argument("path", type=click.Path(exists=True), default=".")
 @click.option("--name", "-n", help="Project name (default: directory name)")
-@click.option("--format", "-f", "formats", multiple=True, default=["json", "html"],
-              type=click.Choice(["json", "html", "pdf"]), help="Output formats")
+@click.option("--format", "-f", "formats", multiple=True, default=["json", "html", "pdf"],
+              type=click.Choice(["json", "html", "pdf"]), help="Output formats (default: json, html, pdf)")
 @click.option("--output", "-o", type=click.Path(), help="Output directory for reports")
 @click.option("--ai/--no-ai", default=True, help="Enable/disable AI insights")
 @click.option("--threshold", type=float, default=70.0, help="Production readiness threshold")
