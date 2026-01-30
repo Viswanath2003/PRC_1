@@ -26,6 +26,8 @@ from ..scanners.security.trivy_scanner import TrivyScanner
 from ..scanners.security.checkov_scanner import CheckovScanner
 from ..scanners.security.gitleaks_scanner import GitleaksScanner
 from ..scanners.security.builtin_secret_scanner import BuiltinSecretScanner
+from ..scanners.performance.config_performance_scanner import ConfigPerformanceScanner
+from ..scanners.reliability.config_reliability_scanner import ConfigReliabilityScanner
 from ..database.storage import LocalStorage
 from ..database.models import ProjectRecord, ScanRecord, IssueRecord, TrendData
 from ..reporters.report_generator import ReportGenerator
@@ -608,6 +610,8 @@ def check_tools():
         ("Checkov", CheckovScanner(), "IaC security scanner"),
         ("Gitleaks", GitleaksScanner(), "Git secret detection"),
         ("Built-in Secret Scanner", BuiltinSecretScanner(), "Hardcoded secret detection"),
+        ("Performance Scanner", ConfigPerformanceScanner(), "Config-based performance analysis"),
+        ("Reliability Scanner", ConfigReliabilityScanner(), "Config-based reliability analysis"),
     ]
 
     table = Table()
@@ -619,7 +623,7 @@ def check_tools():
     for name, scanner, description in tools:
         if scanner.is_available():
             status = "[green]✓ Available[/green]"
-            if name == "Built-in Secret Scanner":
+            if name in ["Built-in Secret Scanner", "Performance Scanner", "Reliability Scanner"]:
                 install = "[dim]Built-in (no installation needed)[/dim]"
             else:
                 install = "[dim]Installed[/dim]"
